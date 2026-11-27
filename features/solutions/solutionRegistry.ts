@@ -318,9 +318,14 @@ function rowNodes(options: {
   visitedOrigins?: number[];
   status?: CanvasNode['status'];
   label: string;
+  badgeAtIndex?: (index: number) => string | undefined;
   detailAtFocus?: (index: number) => string;
 }): CanvasNode[] {
   const chars = [...options.value];
+  if (chars.length === 0) return [{
+    id: `${options.id}-empty`, label: 'ε', x: 600, y: options.y, radius: 20,
+    badge: '空串', sublabel: '字符串为空', status: options.status ?? 'visited'
+  }];
   const pitch = chars.length > 14 ? 42 : 48;
   const startX = (1200 - Math.max(chars.length - 1, 0) * pitch) / 2;
   return chars.map((char, index) => ({
@@ -329,7 +334,7 @@ function rowNodes(options: {
     x: startX + index * pitch,
     y: options.y,
     radius: 19,
-    badge: String(options.origins?.[index] ?? index),
+    badge: options.badgeAtIndex?.(index) ?? String(options.origins?.[index] ?? index),
     sublabel: index === options.focusedIndex
       ? options.detailAtFocus?.(index) ?? options.label
       : options.visitedOrigins?.includes(options.origins?.[index] ?? index) ? '已扫描' : options.label,
@@ -347,8 +352,9 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     id: 'input-char', value: input, y: 115,
     focusedIndex: originFocusIndex,
     visitedOrigins: inputVisitedOrigins,
-    status: isRemoval ? 'error' : algorithm === 'backtracking' ? 'compare' : 'visited',
-    label: '原输入'
+    status: isRemoval ? 'error' : algorithm === 'backtracking' || snapshot.scanIndex !== undefined ? 'compare' : 'visited',
+    label: '原输入',
+    badgeAtIndex: (index) => `原${index}`
   });
   const activeStatus = snapshot.focusStatus === 'error' ? 'error' : isRemoval ? 'compare' : snapshot.focusStatus;
   const focusedCandidateIndex = snapshot.focus.startsWith('candidate-char-')
@@ -363,6 +369,7 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     visitedOrigins: algorithm === 'backtracking' ? snapshot.pathOrigins : undefined,
     status: activeStatus,
     label: isRemoval ? '待删除原候选' : algorithm === 'bfs' ? '当前候选' : '当前输入 · 逐位决策',
+    badgeAtIndex: (index) => snapshot.candidateOrigins ? `原${snapshot.candidateOrigins[index]}` : undefined,
     detailAtFocus: () => isRemoval ? '将删除' : `余额 ${snapshot.balance ?? 0}`
   }));
 
@@ -423,9 +430,9 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     labels,
     notes: algorithm === 'bfs'
       ? isRemoval
-        ? [`原候选下标 ${snapshot.scanIndex ?? 0} 被移除`, '下方是删去该字符后的新候选']
-        : ['上排是题目原输入，下排是当前检查的候选', `已发现 ${snapshot.visited.length} 个不同候选`]
-      : [`正在处理下标 ${(snapshot.scanIndex ?? 0) + 1} / ${input.length}`, '原输入标记保留位，路径区显示已选字符'],
+        ? [`删去原输入下标 ${sourceOrigins[snapshot.scanIndex ?? 0] ?? snapshot.scanIndex ?? 0}`, '下方候选保留剩余字符的原输入下标']
+        : ['上排是原输入，下排是当前候选；角标表示原输入下标', `已发现 ${snapshot.visited.length} 个不同候选`]
+      : [`正在处理原输入下标 ${(snapshot.scanIndex ?? 0) + 1} / ${input.length}`, '下方路径显示已保留的原输入字符'],
     metrics: algorithm === 'bfs' ? [
       { label: '删除层', value: snapshot.level },
       { label: '待检查', value: snapshot.queue.length },

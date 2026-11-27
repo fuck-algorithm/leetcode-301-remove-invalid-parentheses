@@ -63,7 +63,7 @@ describe('createSolutionRegistry', () => {
     const firstScan = validationSteps.find((step) => step.title.includes('字符 1/'));
     const secondScan = validationSteps.find((step) => step.title.includes('字符 2/'));
     expect(firstScan?.narration).toContain('未配对左括号');
-    expect(firstScan?.frame.nodes.filter((node) => node.status === 'compare')).toHaveLength(1);
+    expect(firstScan?.frame.nodes.filter((node) => node.status === 'compare')).toHaveLength(2);
     expect(firstScan?.frame.nodes.find((node) => node.id === 'active-char-0')?.sublabel).toBe('余额 1');
     expect(firstScan?.frame.nodes.find((node) => node.id === 'input-char-0')?.label).toBe('(');
     expect(secondScan?.frame.nodes.find((node) => node.id === 'active-char-1')?.sublabel).toBe('余额 0');
@@ -74,9 +74,10 @@ describe('createSolutionRegistry', () => {
     const laterDeletion = steps.find((step) => step.operation === 'remove' && step.binding.variables.sourceCandidate !== '"()())()"');
     const removedIndex = laterDeletion?.binding.variables.removedIndex as number;
     const activeNode = laterDeletion?.frame.nodes.find((node) => node.id === `active-char-${removedIndex}`);
-    const originalIndex = Number(activeNode?.badge);
+    const originalIndex = Number(activeNode?.badge?.replace('原', ''));
     expect(laterDeletion?.binding.variables.sourceCandidate).not.toBe('"()())()"');
     expect(activeNode?.status).toBe('compare');
+    expect(activeNode?.badge).toBe(`原${originalIndex}`);
     expect(laterDeletion?.frame.nodes.find((node) => node.id === `input-char-${originalIndex}`)?.status).toBe('error');
   });
 
