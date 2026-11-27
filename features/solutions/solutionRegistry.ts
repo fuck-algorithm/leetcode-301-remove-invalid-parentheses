@@ -15,6 +15,7 @@ export type SearchSnapshot = {
   narration: string;
   line: string;
   candidate: string;
+  sourceCandidate?: string;
   level: number;
   queue: string[];
   visited: string[];
@@ -27,6 +28,9 @@ export type SearchSnapshot = {
   rightRemaining?: number;
   path?: string;
   pathOrigins?: number[];
+  candidateOrigins?: number[];
+  nextCandidate?: string;
+  nextOrigins?: number[];
   arrowText?: string;
 };
 
@@ -82,11 +86,12 @@ function buildBfsSnapshots(input: string): SearchSnapshot[] {
   const snapshots: SearchSnapshot[] = [];
   const queue = [input];
   const visited = new Set([input]);
+  const originsByCandidate = new Map([[input, [...input].map((_, index) => index)]]);
   let level = 0;
   snapshots.push({
     operation: 'init', title: '从原串开始',
-    narration: `把原字符串「${input}」放入 BFS 队列；从删除 0 个括号的层开始，按删除数递增搜索。`,
-    line: 'init', candidate: input, level, queue: [...queue], visited: [...visited], answers: [], focus: `candidate:${input}`, focusStatus: 'current'
+    narration: `BFS 把完整字符串「${input}」作为第 0 层候选放入队列。接下来每轮只删一个括号，所以先找 0 次删除的解，再找 1 次删除的解。`,
+    line: 'init', candidate: input, candidateOrigins: [...input].map((_, index) => index), level, queue: [...queue], visited: [...visited], answers: [], focus: `candidate:${input}`, focusStatus: 'current'
   });
 
   while (queue.length > 0) {
@@ -98,8 +103,8 @@ function buildBfsSnapshots(input: string): SearchSnapshot[] {
       const candidateId = `candidate:${candidate}`;
       snapshots.push({
         operation: 'dequeue', title: '取出队首候选',
-        narration: `从队首取出「${candidate || '空串'}」检查；FIFO 保证先处理删除数更少的候选。`,
-        line: 'dequeue', candidate, level, queue: [...queue], visited: [...visited], answers: [...validAtLevel], focus: candidateId, focusStatus: 'current', arrowText: `dequeue ${candidate || '空串'}`
+        narration: `取出当前候选「${candidate || '空串'}」进行检查。待检查队列仍保留其它候选；先进先出保证删除较少的候选先检查。`,
+        line: 'dequeue', candidate, candidateOrigins: originsByCandidate.get(candidate) ?? [...candidate].map((_, index) => index), level, queue: [...queue], visited: [...visited], answers: [...validAtLevel], focus: candidateId, focusStatus: 'current', arrowText: `取出 ${candidate || '空串'}`
       });
       let balance = 0;
       let invalidAt = -1;
@@ -111,29 +116,29 @@ function buildBfsSnapshots(input: string): SearchSnapshot[] {
           break;
         }
         snapshots.push({
-          operation: 'read', title: `扫描位置 ${index} · 余额 ${balance}`,
+          operation: 'read', title: `检查候选「${candidate}」的字符 ${index + 1}/${candidate.length}`,
           narration: candidate[index] === '('
-            ? `读到「(」后未匹配左括号数变为 ${balance}；余额代表后续还需要多少个右括号配对。`
+            ? `候选「${candidate}」的下标 ${index} 是左括号；未配对左括号从 ${balance - 1} 增至 ${balance}。`
             : candidate[index] === ')'
-              ? `读到「)」后余额降为 ${balance}；只要前缀余额不为负，右括号就有左括号可配对。`
-              : `读到字母「${candidate[index]}」；字母不改变括号余额，也永远不会被删除。`,
-          line: 'validate', candidate, level, queue: [...queue], visited: [...visited], answers: [...validAtLevel], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance
+              ? `候选「${candidate}」的下标 ${index} 是右括号；它与一个未配对左括号配对，余额从 ${balance + 1} 降至 ${balance}。`
+              : `候选「${candidate}」的下标 ${index} 是字母「${candidate[index]}」；字母保留在原位，不改变括号余额。`,
+          line: 'validate', candidate, candidateOrigins: originsByCandidate.get(candidate) ?? [...candidate].map((_, originalIndex) => originalIndex), level, queue: [...queue], visited: [...visited], answers: [...validAtLevel], focus: `candidate-char-${index}`, focusStatus: 'compare', scanIndex: index, balance
         });
       }
       const valid = invalidAt < 0 && balance === 0;
       if (invalidAt >= 0) {
         snapshots.push({
-          operation: 'visit', title: `前缀失衡 · 位置 ${invalidAt}`,
-          narration: `位置 ${invalidAt} 的右括号使余额变成 ${balance}，前面没有可配对的左括号；这个候选必须删除多余右括号。`,
-          line: 'validate', candidate, level, queue: [...queue], visited: [...visited], answers: [...validAtLevel], focus: `char-${invalidAt}`, focusStatus: 'error', scanIndex: invalidAt, balance
+          operation: 'visit', title: `候选「${candidate}」在下标 ${invalidAt} 失衡`,
+          narration: `下标 ${invalidAt} 的右括号前没有可配对的左括号，余额变成 ${balance}；候选「${candidate}」无效，需要删括号再检查。`,
+          line: 'validate', candidate, candidateOrigins: originsByCandidate.get(candidate) ?? [...candidate].map((_, index) => index), level, queue: [...queue], visited: [...visited], answers: [...validAtLevel], focus: `char-${invalidAt}`, focusStatus: 'error', scanIndex: invalidAt, balance
         });
       } else {
         snapshots.push({
           operation: valid ? 'match' : 'visit', title: valid ? '候选有效' : '仍有左括号未配对',
           narration: valid
             ? `扫描「${candidate || '空串'}」后余额始终非负且归零，因此它是本层的有效结果。`
-            : `扫描完整个「${candidate}」后余额仍为 ${balance}，表示还有 ${balance} 个左括号未配对，因此候选无效。`,
-          line: 'validate', candidate, level, queue: [...queue], visited: [...visited], answers: [...validAtLevel, ...(valid ? [candidate] : [])], focus: candidateId, focusStatus: valid ? 'done' : 'error', balance
+            : `扫描完整个候选「${candidate}」后余额为 ${balance}，还有 ${balance} 个左括号未配对，因此它无效。`,
+          line: 'validate', candidate, candidateOrigins: originsByCandidate.get(candidate) ?? [...candidate].map((_, index) => index), level, queue: [...queue], visited: [...visited], answers: [...validAtLevel, ...(valid ? [candidate] : [])], focus: candidateId, focusStatus: valid ? 'done' : 'error', balance
         });
       }
       if (valid) {
@@ -147,11 +152,16 @@ function buildBfsSnapshots(input: string): SearchSnapshot[] {
         const next = candidate.slice(0, i) + candidate.slice(i + 1);
         if (visited.has(next)) continue;
         visited.add(next);
+        const candidateOrigins = originsByCandidate.get(candidate) ?? [...candidate].map((_, index) => index);
+        const nextOrigins = candidateOrigins.filter((_, index) => index !== i);
+        originsByCandidate.set(next, nextOrigins);
         queue.push(next);
         snapshots.push({
           operation: 'remove', title: `删除位置 ${i} 的括号`,
-          narration: `移除「${candidate}」中位置 ${i} 的「${char}」得到「${next || '空串'}」；字母保留，重复候选只入队一次。`,
-          line: 'generate', candidate: next, level, queue: [...queue], visited: [...visited], answers: [...validAtLevel], focus: `candidate:${next}`, focusStatus: 'current', scanIndex: i, arrowText: `enqueue ${next || '空串'}`
+          narration: `从「${candidate}」删除下标 ${i} 的「${char}」，得到「${next || '空串'}」。左侧是原候选，右侧是新候选；新候选进入待检查队列。`,
+          line: 'generate', candidate: next, sourceCandidate: candidate,
+          candidateOrigins, nextCandidate: next, nextOrigins,
+          level, queue: [...queue], visited: [...visited], answers: [...validAtLevel], focus: `candidate:${next}`, focusStatus: 'current', scanIndex: i, balance: 0, arrowText: `入队 ${next || '空串'}`
         });
       }
     }
@@ -299,104 +309,131 @@ function candidateSummary(value: string): string {
   return value.length > 9 ? `${value.slice(0, 8)}…` : value || 'ε';
 }
 
-function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'backtracking'): CanvasFrame {
-  const chars: CanvasNode[] = [...input].map((char, index) => ({
-    id: `char-${index}`, label: char, x: 112 + index * 48, y: 205, radius: 19,
-    badge: String(index),
-    sublabel: index === snapshot.scanIndex
-      ? snapshot.operation === 'remove' ? '将删除' : `余额 ${snapshot.balance ?? 0}`
-      : algorithm === 'backtracking' && snapshot.pathOrigins?.includes(index) ? '已保留' : char === '(' || char === ')' ? '待决策' : '保留字母',
-    status: snapshot.focus === `char-${index}`
-      ? snapshot.focusStatus
-      : snapshot.operation === 'remove' && snapshot.scanIndex === index ? 'compare'
-        : algorithm === 'backtracking' && snapshot.pathOrigins?.includes(index) ? 'visited' : 'idle'
+function rowNodes(options: {
+  id: string;
+  value: string;
+  y: number;
+  origins?: number[];
+  focusedIndex?: number;
+  visitedOrigins?: number[];
+  status?: CanvasNode['status'];
+  label: string;
+  detailAtFocus?: (index: number) => string;
+}): CanvasNode[] {
+  const chars = [...options.value];
+  const pitch = chars.length > 14 ? 42 : 48;
+  const startX = (1200 - Math.max(chars.length - 1, 0) * pitch) / 2;
+  return chars.map((char, index) => ({
+    id: `${options.id}-${index}`,
+    label: char,
+    x: startX + index * pitch,
+    y: options.y,
+    radius: 19,
+    badge: String(options.origins?.[index] ?? index),
+    sublabel: index === options.focusedIndex
+      ? options.detailAtFocus?.(index) ?? options.label
+      : options.visitedOrigins?.includes(options.origins?.[index] ?? index) ? '已扫描' : options.label,
+    status: index === options.focusedIndex ? options.status ?? 'current' : options.visitedOrigins?.includes(options.origins?.[index] ?? index) ? 'visited' : 'idle'
   }));
+}
+
+function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'backtracking'): CanvasFrame {
+  const source = snapshot.sourceCandidate ?? snapshot.candidate;
+  const sourceOrigins = snapshot.candidateOrigins ?? [...source].map((_, index) => index);
+  const isRemoval = algorithm === 'bfs' && snapshot.operation === 'remove';
+  const originFocusIndex = snapshot.scanIndex === undefined ? undefined : sourceOrigins[snapshot.scanIndex];
+  const inputVisitedOrigins = algorithm === 'backtracking' ? snapshot.pathOrigins : sourceOrigins.slice(0, Math.max(originFocusIndex ?? 0, 0));
+  const nodes: CanvasNode[] = rowNodes({
+    id: 'input-char', value: input, y: 115,
+    focusedIndex: originFocusIndex,
+    visitedOrigins: inputVisitedOrigins,
+    status: isRemoval ? 'error' : algorithm === 'backtracking' ? 'compare' : 'visited',
+    label: '原输入'
+  });
+  const activeStatus = snapshot.focusStatus === 'error' ? 'error' : isRemoval ? 'compare' : snapshot.focusStatus;
+  const focusedCandidateIndex = snapshot.focus.startsWith('candidate-char-')
+    ? Number(snapshot.focus.slice('candidate-char-'.length))
+    : snapshot.scanIndex !== undefined ? snapshot.scanIndex
+      : algorithm === 'bfs' && (snapshot.operation === 'init' || snapshot.operation === 'dequeue') ? 0 : undefined;
+  const activeFocusLabelIndex = snapshot.scanIndex ?? (algorithm === 'bfs' && snapshot.operation === 'dequeue' ? 0 : undefined);
+
+  nodes.push(...rowNodes({
+    id: 'active-char', value: source, y: 270, origins: sourceOrigins,
+    focusedIndex: focusedCandidateIndex,
+    visitedOrigins: algorithm === 'backtracking' ? snapshot.pathOrigins : undefined,
+    status: activeStatus,
+    label: isRemoval ? '待删除原候选' : algorithm === 'bfs' ? '当前候选' : '当前输入 · 逐位决策',
+    detailAtFocus: () => isRemoval ? '将删除' : `余额 ${snapshot.balance ?? 0}`
+  }));
+
+  if (isRemoval) {
+    nodes.push(...rowNodes({
+      id: 'result-char', value: snapshot.nextCandidate ?? snapshot.candidate,
+      y: 390, origins: snapshot.nextOrigins,
+      label: '删除后候选'
+    }));
+  }
+
+  if (algorithm === 'backtracking') {
+    const origins = snapshot.pathOrigins ?? [];
+    const path = snapshot.path ?? '';
+    nodes.push(...rowNodes({
+      id: 'path-char', value: path, y: 405, origins,
+      label: path ? '已保留到路径' : '当前路径为空'
+    }));
+    if (!path) nodes.push({
+      id: 'path-empty', label: 'ε', x: 600, y: 405, radius: 20,
+      badge: '路径', sublabel: '尚未保留字符', status: 'visited'
+    });
+  }
+
   const visibleCandidates = algorithm === 'bfs' ? snapshot.queue.slice(0, 8) : [];
   const queueLayout = createQueue({
-    id: 'bfs-queue', x: 142, y: 382, capacity: 8, width: 624, height: 112, slotWidth: 76,
-    title: algorithm === 'bfs' ? `BFS 候选队列 · 删除 ${snapshot.level} 层` : 'DFS 当前路径',
+    id: 'bfs-queue', x: 142, y: isRemoval ? 535 : 450, capacity: 8,
+    width: 624, height: 104, slotWidth: 76,
+    title: `待检查候选 · 删除 ${snapshot.level} 层`,
     items: visibleCandidates.map((value) => ({
       id: `candidate:${value}`, label: candidateSummary(value),
       status: 'idle', sublabel: `删除 ${snapshot.level} 个`
     }))
   });
   const queueNodes = queueLayout.nodes.map((node, index) => ({
-    ...node, badge: index === 0 ? '首' : String(index),
-    status: node.status
+    ...node, badge: index === 0 ? '首' : String(index), status: node.status
   } as CanvasNode));
   const answerNodes = snapshot.answers.slice(0, 3).map((answer, index) => ({
     id: `answer-${index}-${encodeURIComponent(answer)}`, label: candidateSummary(answer),
-    x: 950, y: 265 + index * 76, radius: 28, badge: `解${index + 1}`,
+    x: 945, y: 510 + index * 64, radius: 26, badge: `解${index + 1}`,
     sublabel: `有效 · 删 ${snapshot.level}`, status: 'done' as const
   }));
-  const currentValue = algorithm === 'backtracking' ? snapshot.path ?? snapshot.candidate : snapshot.candidate;
-  const currentCandidate: CanvasNode = {
-    id: `candidate:${currentValue}`, label: candidateSummary(currentValue),
-    x: 866, y: 506, radius: 36, badge: algorithm === 'backtracking' ? '路径' : '当前',
-    sublabel: algorithm === 'backtracking'
-      ? `删 L${snapshot.leftRemaining ?? 0}/R${snapshot.rightRemaining ?? 0}`
-      : `删除层 ${snapshot.level}`,
-    status: snapshot.focus === `candidate:${currentValue}`
-      ? snapshot.focusStatus
-      : snapshot.operation === 'read' || algorithm === 'backtracking' ? 'current' : 'visited'
-  };
-  if (snapshot.operation === 'dequeue') {
-    const queueFocus = queueNodes.find((node) => node.id === snapshot.focus);
-    if (queueFocus) queueFocus.status = 'current';
-  }
-  const candidateIsQueued = queueNodes.some((node) => node.id === currentCandidate.id);
-  const nodes = [
-    ...chars,
-    ...queueNodes,
-    ...answerNodes,
-    ...(candidateIsQueued || algorithm === 'backtracking' ? [] : [currentCandidate])
-  ];
-  const focus = nodes.find((node) => node.id === snapshot.focus);
-  const arrows = snapshot.arrowText ? [{
-    id: `flow-${snapshot.operation}-${snapshot.candidate}-${snapshot.queue.length}`,
-    from: { x: 785, y: 438 }, to: { x: currentCandidate.x - 42, y: currentCandidate.y - 4 },
-    text: snapshot.arrowText, kind: 'transfer' as const, curve: -18, labelOffset: { x: 0, y: -12 }
+  nodes.push(...queueNodes, ...answerNodes);
+
+  const focusId = activeFocusLabelIndex === undefined ? undefined : `${algorithm === 'backtracking' ? 'input-char' : 'active-char'}-${activeFocusLabelIndex}`;
+  const labels = focusId ? [{
+    id: 'focus-label', targetId: focusId,
+    text: snapshot.operation === 'done' || snapshot.operation === 'match' ? '有效答案' : algorithm === 'backtracking' ? '正在决定这个字符' : isRemoval ? `删除下标 ${snapshot.scanIndex}` : '正在检查当前候选',
+    detail: snapshot.operation === 'done' ? '本层全部有效结果' : algorithm === 'backtracking' ? `路径「${snapshot.path || '空'}」 · 余额 ${snapshot.balance ?? 0}` : isRemoval ? `「${source}」→「${snapshot.nextCandidate || '空串'}」` : `下标 ${snapshot.scanIndex ?? 0} · 余额 ${snapshot.balance ?? 0}`,
+    position: 'top' as const, variant: 'callout' as const, tone: 'accent' as const
   }] : [];
-  if (focus && snapshot.operation !== 'done' && focus.status === 'idle') {
-    focus.status = 'current';
-  }
-  if (algorithm === 'backtracking') {
-    const pathOrigins = snapshot.pathOrigins ?? [];
-    if (pathOrigins.length === 0) {
-      nodes.push({
-        id: 'path-empty', label: 'ε', x: 520, y: 410, radius: 24,
-        badge: '路径', sublabel: '当前还未保留字符', status: 'visited'
-      });
-    } else {
-      pathOrigins.forEach((origin, index) => nodes.push({
-        id: `path-char-${origin}`, label: input[origin], x: 260 + index * 58, y: 410, radius: 22,
-        badge: `原${origin}`, sublabel: '已保留', status: 'visited'
-      }));
-    }
-  }
+
   return {
     nodes,
     edges: [],
-    arrows,
+    arrows: [],
     containers: algorithm === 'bfs' ? queueLayout.containers : [],
-
-    labels: focus ? [{
-      id: 'focus-label', targetId: focus.id,
-      text: snapshot.operation === 'done' || snapshot.operation === 'match' ? '有效答案' : algorithm === 'backtracking' ? 'DFS 当前决策' : '本步焦点',
-      detail: snapshot.operation === 'done' ? '本层全部有效结果' : algorithm === 'backtracking' ? `余额 ${snapshot.balance ?? 0} · 删除预算 L${snapshot.leftRemaining ?? 0}/R${snapshot.rightRemaining ?? 0}` : '按 FIFO 顺序处理',
-      position: 'top', variant: 'callout', tone: 'accent'
-    }] : [],
+    labels,
     notes: algorithm === 'bfs'
-      ? ['规则：每次只删除一个括号', `已发现 ${snapshot.visited.length} 个不同候选`]
-      : [`当前字符位置 ${snapshot.scanIndex ?? 0} / ${input.length - 1}：${input[snapshot.scanIndex ?? 0] ?? '开始搜索'}`, '先尝试删除分支，再尝试保留分支'],
+      ? isRemoval
+        ? [`原候选下标 ${snapshot.scanIndex ?? 0} 被移除`, '下方是删去该字符后的新候选']
+        : ['上排是题目原输入，下排是当前检查的候选', `已发现 ${snapshot.visited.length} 个不同候选`]
+      : [`正在处理下标 ${(snapshot.scanIndex ?? 0) + 1} / ${input.length}`, '原输入标记保留位，路径区显示已选字符'],
     metrics: algorithm === 'bfs' ? [
       { label: '删除层', value: snapshot.level },
       { label: '待检查', value: snapshot.queue.length },
       { label: '有效结果', value: snapshot.answers.length }
     ] : [
       { label: '最少删除', value: snapshot.level },
-      { label: '未匹配左括号', value: snapshot.balance ?? 0 },
-      { label: `剩余删除 L${snapshot.leftRemaining ?? 0}/R${snapshot.rightRemaining ?? 0}`, value: (snapshot.leftRemaining ?? 0) + (snapshot.rightRemaining ?? 0) }
+      { label: '未配对左括号', value: snapshot.balance ?? 0 },
+      { label: '剩余删除预算', value: (snapshot.leftRemaining ?? 0) + (snapshot.rightRemaining ?? 0) }
     ]
   };
 }
@@ -512,11 +549,14 @@ function definition(algorithm: 'bfs' | 'backtracking'): ProblemSolution {
         anchorIds: [snapshot.line],
         variables: isBfs ? {
           candidate: snapshot.candidate || '""',
+          sourceCandidate: snapshot.sourceCandidate ?? '',
           deletionLevel: snapshot.level,
+          removedIndex: snapshot.scanIndex ?? -1,
           frontier: snapshot.queue.length,
           answers: snapshot.answers.length
         } : {
           path: snapshot.path ?? '',
+          removedIndex: snapshot.scanIndex ?? -1,
           leftRemaining: snapshot.leftRemaining ?? 0,
           rightRemaining: snapshot.rightRemaining ?? 0,
           balance: snapshot.balance ?? 0,

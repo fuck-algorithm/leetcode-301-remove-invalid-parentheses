@@ -58,35 +58,38 @@ describe('createSolutionRegistry', () => {
     }
   });
 
-  it('explains each scanned character with its live balance and points to one character', () => {
+  it('shows the original input separately from the active BFS candidate', () => {
     const validationSteps = sol.buildSteps('()())()').filter((step) => step.binding.anchorIds.includes('validate'));
-    const firstScan = validationSteps.find((step) => step.title.includes('扫描位置 0'));
-    const secondScan = validationSteps.find((step) => step.title.includes('扫描位置 1'));
-    expect(firstScan?.narration).toContain('余额代表');
+    const firstScan = validationSteps.find((step) => step.title.includes('字符 1/'));
+    const secondScan = validationSteps.find((step) => step.title.includes('字符 2/'));
+    expect(firstScan?.narration).toContain('未配对左括号');
     expect(firstScan?.frame.nodes.filter((node) => node.status === 'compare')).toHaveLength(1);
-    expect(firstScan?.frame.nodes.find((node) => node.id === 'char-0')?.sublabel).toBe('余额 1');
-    expect(secondScan?.frame.nodes.find((node) => node.id === 'char-1')?.sublabel).toBe('余额 0');
+    expect(firstScan?.frame.nodes.find((node) => node.id === 'active-char-0')?.sublabel).toBe('余额 1');
+    expect(firstScan?.frame.nodes.find((node) => node.id === 'input-char-0')?.label).toBe('(');
+    expect(secondScan?.frame.nodes.find((node) => node.id === 'active-char-1')?.sublabel).toBe('余额 0');
   });
 
-  it('explains each scanned character with its live balance and points to one character', () => {
-    const validationSteps = sol.buildSteps('()())()').filter((step) => step.binding.anchorIds.includes('validate'));
-    const firstScan = validationSteps.find((step) => step.title.includes('扫描位置 0'));
-    const secondScan = validationSteps.find((step) => step.title.includes('扫描位置 1'));
-    expect(firstScan?.narration).toContain('余额代表');
-    expect(firstScan?.frame.nodes.filter((node) => node.status === 'compare')).toHaveLength(1);
-    expect(firstScan?.frame.nodes.find((node) => node.id === 'char-0')?.sublabel).toBe('余额 1');
-    expect(secondScan?.frame.nodes.find((node) => node.id === 'char-1')?.sublabel).toBe('余额 0');
-  });
-
-  it('keeps the active candidate visible while scanning and marks the removed bracket', () => {
+  it('keeps source indices aligned after deleting a character in a later BFS layer', () => {
     const steps = sol.buildSteps('()())()');
-    const scan = steps.find((step) => step.operation === 'read');
-    const removal = steps.find((step) => step.operation === 'remove');
+    const laterDeletion = steps.find((step) => step.operation === 'remove' && step.binding.variables.sourceCandidate !== '"()())()"');
+    const removedIndex = laterDeletion?.binding.variables.removedIndex as number;
+    const activeNode = laterDeletion?.frame.nodes.find((node) => node.id === `active-char-${removedIndex}`);
+    const originalIndex = Number(activeNode?.badge);
+    expect(laterDeletion?.binding.variables.sourceCandidate).not.toBe('"()())()"');
+    expect(activeNode?.status).toBe('compare');
+    expect(laterDeletion?.frame.nodes.find((node) => node.id === `input-char-${originalIndex}`)?.status).toBe('error');
+  });
 
-    expect(scan?.frame.nodes.find((node) => node.id.startsWith('candidate:'))?.status).toBe('current');
-    expect(scan?.frame.nodes.filter((node) => node.status === 'current')).toHaveLength(1);
-    expect(removal?.frame.nodes.find((node) => node.id === `char-${removal.frame.nodes.find((node) => node.sublabel === '将删除')?.badge}`)?.status).toBe('compare');
-    expect(removal?.frame.nodes.find((node) => node.id === `candidate:${removal.binding.variables.candidate}`)?.status).toBe('current');
+  it('shows source and result candidates as separate rows for a BFS deletion', () => {
+    const removal = sol.buildSteps('()())()').find((step) => step.operation === 'remove');
+    const removedIndex = removal?.binding.variables.removedIndex as number;
+    expect(removal?.frame.nodes.find((node) => node.id === `active-char-${removedIndex}`)?.status).toBe('compare');
+    expect(removal?.frame.nodes.find((node) => node.id === `active-char-${removedIndex}`)?.label).toBe('(');
+    expect(removal?.frame.nodes.find((node) => node.id === 'result-char-3')?.label).toBe(')');
+    expect(removal?.frame.nodes.find((node) => node.id === 'result-char-0')?.label).toBe(')');
+    expect(removal?.frame.nodes.find((node) => node.id === 'result-char-1')?.label).toBe('(');
+    expect(removal?.frame.containers?.[0].items).toContain(`candidate:${removal?.binding.variables.candidate}`);
+    expect(removal?.narration).toContain('左侧是原候选，右侧是新候选');
   });
 
   it('shows explicit backtracking branches, pruning, balance, and remaining removal budget', () => {
@@ -105,13 +108,12 @@ describe('createSolutionRegistry', () => {
     expect(backtracking.solve('(a)())()')).toEqual(['(a())()', '(a)()()']);
   });
 
-  it('draws the DFS path separately without an empty queue container', () => {
+  it('shows the DFS input and selected path as separate rows', () => {
     const step = registry[1].buildSteps('(a)())()').find((item) => item.operation === 'recurse' && item.title.includes('保留位置 0'));
     expect(step?.frame.containers).toEqual([]);
-    expect(step?.frame.nodes.some((node) => node.id === 'dfs-path')).toBe(false);
+    expect(step?.frame.nodes.some((node) => node.id === 'input-char-0' && node.label === '(' && node.status === 'compare')).toBe(true);
     expect(step?.frame.nodes.some((node) => node.id === 'path-char-0' && node.label === '(')).toBe(true);
-    expect(step?.frame.nodes.some((node) => node.id === 'path-char-1' && node.label === 'a')).toBe(false);
-    expect(step?.frame.nodes.some((node) => node.id === 'char-0' && node.status === 'compare')).toBe(true);
+    expect(step?.frame.nodes.some((node) => node.id === 'input-char-1' && node.label === 'a')).toBe(true);
     expect(step?.binding.variables.path).toBe('(');
     expect(step?.binding.variables.balance).toBe(1);
     expect(step?.binding.variables.leftRemaining).toBe(0);
