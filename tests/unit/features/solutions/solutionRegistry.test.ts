@@ -89,6 +89,29 @@ describe('createSolutionRegistry', () => {
     expect(removal?.frame.nodes.find((node) => node.id === `candidate:${removal.binding.variables.candidate}`)?.status).toBe('current');
   });
 
+  it('shows explicit backtracking branches, pruning, balance, and remaining removal budget', () => {
+    const backtracking = registry[1];
+    const steps = backtracking.buildSteps('(a)())()');
+    const operations = steps.map((step) => step.operation);
+
+    expect(steps.length).toBeGreaterThan(12);
+    expect(operations).toContain('remove');
+    expect(operations).toContain('recurse');
+    expect(operations).toContain('visit');
+    expect(operations).toContain('match');
+    expect(steps.some((step) => /剪枝/.test(step.title))).toBe(true);
+    expect(steps.some((step) => step.narration.includes('余额'))).toBe(true);
+    expect(steps.some((step) => step.binding.variables.leftRemaining !== undefined && step.binding.variables.rightRemaining !== undefined)).toBe(true);
+    expect(backtracking.solve('(a)())()')).toEqual(['(a())()', '(a)()()']);
+  });
+
+  it('records explicit DFS decisions for a minimal unmatched parenthesis', () => {
+    const steps = registry[1].buildSteps(')(');
+    expect(steps.some((step) => step.title.includes('删除位置 0 的右括号'))).toBe(true);
+    expect(steps.some((step) => step.title.includes('删除位置 1 的左括号'))).toBe(true);
+    expect(steps.at(-1)?.frame.metrics?.some((metric) => metric.label === '最少删除' && metric.value === 2)).toBe(true);
+  });
+
   it('returns every minimum-removal answer for sample and edge cases', () => {
     expect(sol.solve('()())()')).toEqual(['(())()', '()()()']);
     expect(sol.solve('(a)())()')).toEqual(['(a())()', '(a)()()']);

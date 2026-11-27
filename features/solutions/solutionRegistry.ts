@@ -20,9 +20,12 @@ export type SearchSnapshot = {
   visited: string[];
   answers: string[];
   focus: string;
-  focusStatus: 'current' | 'compare' | 'error' | 'done';
+  focusStatus: 'current' | 'compare' | 'visited' | 'error' | 'done';
   scanIndex?: number;
   balance?: number;
+  leftRemaining?: number;
+  rightRemaining?: number;
+  path?: string;
   arrowText?: string;
 };
 
@@ -167,26 +170,125 @@ function buildBfsSnapshots(input: string): SearchSnapshot[] {
 
 function buildBacktrackingSnapshots(input: string): SearchSnapshot[] {
   const snapshots: SearchSnapshot[] = [];
-  const answers = solveBfs(input);
-  const maxRemove = [...input].filter((char) => char === '(' || char === ')').length - Math.min(...answers.map((answer) => [...answer].filter((char) => char === '(' || char === ')').length));
-  snapshots.push({
-    operation: 'init', title: '计算必须删除数',
-    narration: `先扫描输入统计多余左、右括号，确定最少需要删除的数量，再进行有界 DFS。`,
-    line: 'count', candidate: input, level: maxRemove, queue: [], visited: [input], answers: [], focus: 'input', focusStatus: 'current'
-  });
-  for (let i = 0; i < input.length && snapshots.length < 24; i += 1) {
-    const char = input[i];
-    if (char !== '(' && char !== ')') continue;
-    snapshots.push({
-      operation: 'recurse', title: `选择位置 ${i} 的字符`,
-      narration: char === '(' ? `遇到左括号「(」时保留它会增加未匹配数；删除预算约束搜索不超过最少删除数。` : `遇到右括号「)」时只有存在未匹配左括号才可保留，避免前缀余额为负。`,
-      line: 'search', candidate: input.slice(0, i + 1), level: Math.max(0, maxRemove), queue: [], visited: [input], answers: [], focus: `char-${i}`, focusStatus: 'compare'
-    });
+  const answers: string[] = [];
+  const visited = new Set<string>();
+  let leftToRemove = 0;
+  let rightToRemove = 0;
+  for (const char of input) {
+    if (char === '(') leftToRemove += 1;
+    if (char === ')') {
+      if (leftToRemove > 0) leftToRemove -= 1;
+      else rightToRemove += 1;
+    }
   }
+  const minimumRemovals = leftToRemove + rightToRemove;
+  const maxTraceSteps = 48;
+  const record = (snapshot: SearchSnapshot, state?: { path: string; leftRemaining: number; rightRemaining: number }) => {
+    if (snapshots.length < maxTraceSteps) {
+      snapshots.push(state ? {
+        ...snapshot,
+        candidate: state.path,
+        path: state.path,
+        leftRemaining: state.leftRemaining,
+        rightRemaining: state.rightRemaining
+      } : snapshot);
+    }
+  };
+
+  record({
+    operation: 'init', title: '先算删除预算',
+    narration: `扫描输入后发现至少要删 ${leftToRemove} 个多余左括号和 ${rightToRemove} 个多余右括号；DFS 只探索恰好用完这份预算的路径。`,
+    line: 'count', candidate: '', level: minimumRemovals, queue: [], visited: [], answers: [], focus: 'input', focusStatus: 'current',
+    path: '', leftRemaining: leftToRemove, rightRemaining: rightToRemove
+  }, { path: '', leftRemaining: leftToRemove, rightRemaining: rightToRemove });
+
+  const search = (index: number, path: string, balance: number, leftRemaining: number, rightRemaining: number) => {
+    if (index === input.length) {
+      if (leftRemaining === 0 && rightRemaining === 0 && balance === 0) {
+        if (!visited.has(path)) {
+          visited.add(path);
+          answers.push(path);
+          record({
+            operation: 'match', title: '找到一个有效结果',
+            narration: `路径「${path || '空串'}」用完删除预算且余额归零，因此收录为答案；继续搜索以找齐其它最优解。`,
+            line: 'collect', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `candidate:${path}`, focusStatus: 'done', balance
+          }, { path, leftRemaining, rightRemaining });
+        }
+      } else {
+        record({
+          operation: 'visit', title: '到达末尾但条件未满足',
+          narration: `路径「${path || '空串'}」结束时还剩 ${leftRemaining + rightRemaining} 次删除预算或余额为 ${balance}，不能作为有效答案。`,
+          line: 'validate', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: index > 0 ? `char-${index - 1}` : 'input', focusStatus: 'error', balance
+        }, { path, leftRemaining, rightRemaining });
+      }
+      return;
+    }
+
+    const char = input[index];
+    if (char !== '(' && char !== ')') {
+      record({
+        operation: 'read', title: `保留字母「${char}」`,
+        narration: `位置 ${index} 是字母「${char}」而非括号，题目不允许删除它，所以直接接到当前路径后。`,
+        line: 'search', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance
+      }, { path: path + char, leftRemaining, rightRemaining });
+      search(index + 1, path + char, balance, leftRemaining, rightRemaining);
+      return;
+    }
+
+    const duplicate = index > 0 && input[index] === input[index - 1];
+    if (char === '(' && leftRemaining > 0 && !duplicate) {
+      record({
+        operation: 'remove', title: `删除位置 ${index} 的左括号`,
+        narration: `还需删除 ${leftRemaining} 个左括号；跳过当前位置后预算减一，递归探索这条删除分支。`,
+        line: 'search', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance
+      }, { path, leftRemaining, rightRemaining });
+      search(index + 1, path, balance, leftRemaining - 1, rightRemaining);
+    } else if (char === ')' && rightRemaining > 0 && !duplicate) {
+      record({
+        operation: 'remove', title: `删除位置 ${index} 的右括号`,
+        narration: `此前没有未匹配左括号可与它配对，因此这是多余右括号；删除后右括号预算减一。`,
+        line: 'search', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance
+      }, { path, leftRemaining, rightRemaining });
+      search(index + 1, path, balance, leftRemaining, rightRemaining - 1);
+    }
+
+    if (duplicate) {
+      record({
+        operation: 'visit', title: '跳过重复删除分支',
+        narration: `位置 ${index} 与前一位括号相同；删除任意一个会产生相同子问题，因此只保留第一次删除的分支。`,
+        line: 'generate', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'visited', scanIndex: index, balance
+      }, { path, leftRemaining, rightRemaining });
+    }
+
+    if (char === '(') {
+      record({
+        operation: 'recurse', title: `保留位置 ${index} 的左括号`,
+        narration: `选择保留「(」会让未匹配余额从 ${balance} 增至 ${balance + 1}；递归继续处理下一个字符。`,
+        line: 'search', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance: balance + 1
+      }, { path, leftRemaining, rightRemaining });
+      search(index + 1, path + char, balance + 1, leftRemaining, rightRemaining);
+    } else if (balance > 0) {
+      record({
+        operation: 'recurse', title: `配对并保留位置 ${index} 的右括号`,
+        narration: `当前余额 ${balance} 大于 0，存在左括号可配对；保留「)」后余额减为 ${balance - 1}。`,
+        line: 'search', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance: balance - 1
+      }, { path, leftRemaining, rightRemaining });
+      search(index + 1, path + char, balance - 1, leftRemaining, rightRemaining);
+    } else {
+      record({
+        operation: 'visit', title: '剪枝：右括号没有可配对项',
+        narration: `位置 ${index} 的「)」遇到余额 0；保留它会让前缀余额变成 -1，因此这条分支立即剪枝。`,
+        line: 'validate', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'error', scanIndex: index, balance
+      }, { path, leftRemaining, rightRemaining });
+    }
+  };
+
+  search(0, '', 0, leftToRemove, rightToRemove);
+  const sortedAnswers = answers.sort();
   snapshots.push({
-    operation: 'done', title: '返回去重后的答案',
-    narration: `回溯只在删除预算耗尽且括号余额为零时收录；结果为 ${answers.map((answer) => `「${answer || '空串'}」`).join('、')}。`,
-    line: 'collect', candidate: answers[0] ?? '', level: maxRemove, queue: [], visited: [input], answers, focus: `candidate:${answers[0] ?? ''}`, focusStatus: 'done'
+    operation: 'done', title: '返回全部最少删除结果',
+    narration: `搜索结束，共找到 ${sortedAnswers.length} 个有效结果；每条答案都恰好删除 ${minimumRemovals} 个括号，并保持前缀余额非负、最终归零。`,
+    line: 'collect', candidate: sortedAnswers[0] ?? '', level: minimumRemovals, queue: [], visited: [...visited], answers: sortedAnswers, focus: `candidate:${sortedAnswers[0] ?? ''}`, focusStatus: 'done', balance: 0
   });
   return snapshots;
 }
@@ -201,10 +303,11 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     badge: String(index),
     sublabel: index === snapshot.scanIndex
       ? snapshot.operation === 'remove' ? '将删除' : `余额 ${snapshot.balance ?? 0}`
-      : char === '(' || char === ')' ? '括号' : '保留字母',
+      : algorithm === 'backtracking' && index < (snapshot.scanIndex ?? -1) ? '已决策' : char === '(' || char === ')' ? '括号' : '保留字母',
     status: snapshot.focus === `char-${index}`
       ? snapshot.focusStatus
-      : snapshot.operation === 'remove' && snapshot.scanIndex === index ? 'compare' : 'idle'
+      : snapshot.operation === 'remove' && snapshot.scanIndex === index ? 'compare'
+        : algorithm === 'backtracking' && index < (snapshot.scanIndex ?? -1) ? 'visited' : 'idle'
   }));
   const visibleCandidates = algorithm === 'bfs' ? snapshot.queue.slice(0, 8) : [];
   const queueLayout = createQueue({
@@ -224,27 +327,44 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     x: 950, y: 265 + index * 76, radius: 28, badge: `解${index + 1}`,
     sublabel: `有效 · 删 ${snapshot.level}`, status: 'done' as const
   }));
+  const currentValue = algorithm === 'backtracking' ? snapshot.path ?? snapshot.candidate : snapshot.candidate;
   const currentCandidate: CanvasNode = {
-    id: `candidate:${snapshot.candidate}`, label: candidateSummary(snapshot.candidate),
-    x: 866, y: 506, radius: 36, badge: '当前', sublabel: `删除层 ${snapshot.level}`,
-    status: snapshot.focus === `candidate:${snapshot.candidate}`
+    id: `candidate:${currentValue}`, label: candidateSummary(currentValue),
+    x: 866, y: 506, radius: 36, badge: algorithm === 'backtracking' ? '路径' : '当前',
+    sublabel: algorithm === 'backtracking'
+      ? `删 L${snapshot.leftRemaining ?? 0}/R${snapshot.rightRemaining ?? 0}`
+      : `删除层 ${snapshot.level}`,
+    status: snapshot.focus === `candidate:${currentValue}`
       ? snapshot.focusStatus
-      : snapshot.operation === 'read' ? 'current' : 'visited'
+      : snapshot.operation === 'read' || algorithm === 'backtracking' ? 'current' : 'visited'
   };
   if (snapshot.operation === 'dequeue') {
     const queueFocus = queueNodes.find((node) => node.id === snapshot.focus);
     if (queueFocus) queueFocus.status = 'current';
   }
   const candidateIsQueued = queueNodes.some((node) => node.id === currentCandidate.id);
-  const nodes = [...chars, ...queueNodes, ...answerNodes, ...(candidateIsQueued ? [] : [currentCandidate])];
+  const nodes = [
+    ...chars,
+    ...queueNodes,
+    ...answerNodes,
+    ...(candidateIsQueued || algorithm === 'backtracking' ? [] : [currentCandidate])
+  ];
   const focus = nodes.find((node) => node.id === snapshot.focus);
   const arrows = snapshot.arrowText ? [{
     id: `flow-${snapshot.operation}-${snapshot.candidate}-${snapshot.queue.length}`,
     from: { x: 785, y: 438 }, to: { x: currentCandidate.x - 42, y: currentCandidate.y - 4 },
     text: snapshot.arrowText, kind: 'transfer' as const, curve: -18, labelOffset: { x: 0, y: -12 }
   }] : [];
-  if (focus && snapshot.operation !== 'done') {
-    if (focus.status !== 'compare') focus.status = 'current';
+  if (focus && snapshot.operation !== 'done' && focus.status === 'idle') {
+    focus.status = 'current';
+  }
+  if (algorithm === 'backtracking') {
+    const pathText = snapshot.path || 'ε（空路径）';
+    nodes.push({
+      id: 'dfs-path', label: candidateSummary(snapshot.path ?? ''), x: 866, y: 506,
+      radius: 36, badge: 'DFS', sublabel: `当前前缀：${pathText}`,
+      status: 'current'
+    });
   }
   return {
     nodes,
@@ -253,15 +373,19 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     containers: queueLayout.containers,
     labels: focus ? [{
       id: 'focus-label', targetId: focus.id,
-      text: snapshot.operation === 'done' ? '最短答案' : '本步焦点',
-      detail: snapshot.operation === 'done' ? '本层全部有效结果' : '按 FIFO 顺序处理',
+      text: snapshot.operation === 'done' || snapshot.operation === 'match' ? '有效答案' : algorithm === 'backtracking' ? 'DFS 当前决策' : '本步焦点',
+      detail: snapshot.operation === 'done' ? '本层全部有效结果' : algorithm === 'backtracking' ? `余额 ${snapshot.balance ?? 0} · 删除预算 L${snapshot.leftRemaining ?? 0}/R${snapshot.rightRemaining ?? 0}` : '按 FIFO 顺序处理',
       position: 'top', variant: 'callout', tone: 'accent'
     }] : [],
     notes: [algorithm === 'bfs' ? '先检查整层，再生成下一层' : '删除预算与余额共同剪枝', `已发现 ${snapshot.visited.length} 个不同候选`],
-    metrics: [
-      { label: algorithm === 'bfs' ? '删除层' : '删除预算', value: snapshot.level },
-      { label: algorithm === 'bfs' ? '待检查' : '未匹配左括号', value: algorithm === 'bfs' ? snapshot.queue.length : snapshot.balance ?? 0 },
+    metrics: algorithm === 'bfs' ? [
+      { label: '删除层', value: snapshot.level },
+      { label: '待检查', value: snapshot.queue.length },
       { label: '有效结果', value: snapshot.answers.length }
+    ] : [
+      { label: '最少删除', value: snapshot.level },
+      { label: '未匹配左括号', value: snapshot.balance ?? 0 },
+      { label: '剩余预算', value: (snapshot.leftRemaining ?? 0) + (snapshot.rightRemaining ?? 0) }
     ]
   };
 }
@@ -293,10 +417,16 @@ function definition(algorithm: 'bfs' | 'backtracking'): ProblemSolution {
       operation: snapshot.operation,
       binding: {
         anchorIds: [snapshot.line],
-        variables: {
+        variables: isBfs ? {
           candidate: snapshot.candidate || '""',
           deletionLevel: snapshot.level,
           frontier: snapshot.queue.length,
+          answers: snapshot.answers.length
+        } : {
+          path: snapshot.path ?? '',
+          leftRemaining: snapshot.leftRemaining ?? 0,
+          rightRemaining: snapshot.rightRemaining ?? 0,
+          balance: snapshot.balance ?? 0,
           answers: snapshot.answers.length
         }
       },

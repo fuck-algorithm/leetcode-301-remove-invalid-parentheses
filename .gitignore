@@ -30,3 +30,6 @@ pnpm-debug.log*
 playwright-report
 test-results
 coverage
+
+# Claude Code status bar local site link
+server-url.txt
