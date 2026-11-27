@@ -26,6 +26,7 @@ export type SearchSnapshot = {
   leftRemaining?: number;
   rightRemaining?: number;
   path?: string;
+  pathOrigins?: number[];
   arrowText?: string;
 };
 
@@ -183,12 +184,13 @@ function buildBacktrackingSnapshots(input: string): SearchSnapshot[] {
   }
   const minimumRemovals = leftToRemove + rightToRemove;
   const maxTraceSteps = 48;
-  const record = (snapshot: SearchSnapshot, state?: { path: string; leftRemaining: number; rightRemaining: number }) => {
+  const record = (snapshot: SearchSnapshot, state?: { path: string; pathOrigins: number[]; leftRemaining: number; rightRemaining: number }) => {
     if (snapshots.length < maxTraceSteps) {
       snapshots.push(state ? {
         ...snapshot,
         candidate: state.path,
         path: state.path,
+        pathOrigins: state.pathOrigins,
         leftRemaining: state.leftRemaining,
         rightRemaining: state.rightRemaining
       } : snapshot);
@@ -200,9 +202,9 @@ function buildBacktrackingSnapshots(input: string): SearchSnapshot[] {
     narration: `扫描输入后发现至少要删 ${leftToRemove} 个多余左括号和 ${rightToRemove} 个多余右括号；DFS 只探索恰好用完这份预算的路径。`,
     line: 'count', candidate: '', level: minimumRemovals, queue: [], visited: [], answers: [], focus: 'input', focusStatus: 'current',
     path: '', leftRemaining: leftToRemove, rightRemaining: rightToRemove
-  }, { path: '', leftRemaining: leftToRemove, rightRemaining: rightToRemove });
+  }, { path: '', pathOrigins: [], leftRemaining: leftToRemove, rightRemaining: rightToRemove });
 
-  const search = (index: number, path: string, balance: number, leftRemaining: number, rightRemaining: number) => {
+  const search = (index: number, path: string, pathOrigins: number[], balance: number, leftRemaining: number, rightRemaining: number) => {
     if (index === input.length) {
       if (leftRemaining === 0 && rightRemaining === 0 && balance === 0) {
         if (!visited.has(path)) {
@@ -212,14 +214,14 @@ function buildBacktrackingSnapshots(input: string): SearchSnapshot[] {
             operation: 'match', title: '找到一个有效结果',
             narration: `路径「${path || '空串'}」用完删除预算且余额归零，因此收录为答案；继续搜索以找齐其它最优解。`,
             line: 'collect', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `candidate:${path}`, focusStatus: 'done', balance
-          }, { path, leftRemaining, rightRemaining });
+          }, { path, pathOrigins, leftRemaining, rightRemaining });
         }
       } else {
         record({
           operation: 'visit', title: '到达末尾但条件未满足',
           narration: `路径「${path || '空串'}」结束时还剩 ${leftRemaining + rightRemaining} 次删除预算或余额为 ${balance}，不能作为有效答案。`,
           line: 'validate', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: index > 0 ? `char-${index - 1}` : 'input', focusStatus: 'error', balance
-        }, { path, leftRemaining, rightRemaining });
+        }, { path, pathOrigins, leftRemaining, rightRemaining });
       }
       return;
     }
@@ -229,9 +231,9 @@ function buildBacktrackingSnapshots(input: string): SearchSnapshot[] {
       record({
         operation: 'read', title: `保留字母「${char}」`,
         narration: `位置 ${index} 是字母「${char}」而非括号，题目不允许删除它，所以直接接到当前路径后。`,
-        line: 'search', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance
-      }, { path: path + char, leftRemaining, rightRemaining });
-      search(index + 1, path + char, balance, leftRemaining, rightRemaining);
+        line: 'keep', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance
+      }, { path: path + char, pathOrigins: [...pathOrigins, index], leftRemaining, rightRemaining });
+      search(index + 1, path + char, [...pathOrigins, index], balance, leftRemaining, rightRemaining);
       return;
     }
 
@@ -241,15 +243,15 @@ function buildBacktrackingSnapshots(input: string): SearchSnapshot[] {
         operation: 'remove', title: `删除位置 ${index} 的左括号`,
         narration: `还需删除 ${leftRemaining} 个左括号；跳过当前位置后预算减一，递归探索这条删除分支。`,
         line: 'search', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance
-      }, { path, leftRemaining, rightRemaining });
-      search(index + 1, path, balance, leftRemaining - 1, rightRemaining);
+      }, { path, pathOrigins, leftRemaining, rightRemaining });
+      search(index + 1, path, pathOrigins, balance, leftRemaining - 1, rightRemaining);
     } else if (char === ')' && rightRemaining > 0 && !duplicate) {
       record({
         operation: 'remove', title: `删除位置 ${index} 的右括号`,
         narration: `此前没有未匹配左括号可与它配对，因此这是多余右括号；删除后右括号预算减一。`,
         line: 'search', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance
-      }, { path, leftRemaining, rightRemaining });
-      search(index + 1, path, balance, leftRemaining, rightRemaining - 1);
+      }, { path, pathOrigins, leftRemaining, rightRemaining });
+      search(index + 1, path, pathOrigins, balance, leftRemaining, rightRemaining - 1);
     }
 
     if (duplicate) {
@@ -257,33 +259,33 @@ function buildBacktrackingSnapshots(input: string): SearchSnapshot[] {
         operation: 'visit', title: '跳过重复删除分支',
         narration: `位置 ${index} 与前一位括号相同；删除任意一个会产生相同子问题，因此只保留第一次删除的分支。`,
         line: 'generate', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'visited', scanIndex: index, balance
-      }, { path, leftRemaining, rightRemaining });
+      }, { path, pathOrigins, leftRemaining, rightRemaining });
     }
 
     if (char === '(') {
       record({
         operation: 'recurse', title: `保留位置 ${index} 的左括号`,
         narration: `选择保留「(」会让未匹配余额从 ${balance} 增至 ${balance + 1}；递归继续处理下一个字符。`,
-        line: 'search', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance: balance + 1
-      }, { path, leftRemaining, rightRemaining });
-      search(index + 1, path + char, balance + 1, leftRemaining, rightRemaining);
+        line: 'keep', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance: balance + 1
+      }, { path: path + char, pathOrigins: [...pathOrigins, index], leftRemaining, rightRemaining });
+      search(index + 1, path + char, [...pathOrigins, index], balance + 1, leftRemaining, rightRemaining);
     } else if (balance > 0) {
       record({
         operation: 'recurse', title: `配对并保留位置 ${index} 的右括号`,
         narration: `当前余额 ${balance} 大于 0，存在左括号可配对；保留「)」后余额减为 ${balance - 1}。`,
-        line: 'search', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance: balance - 1
-      }, { path, leftRemaining, rightRemaining });
-      search(index + 1, path + char, balance - 1, leftRemaining, rightRemaining);
+        line: 'keep', candidate: path + char, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'compare', scanIndex: index, balance: balance - 1
+      }, { path: path + char, pathOrigins: [...pathOrigins, index], leftRemaining, rightRemaining });
+      search(index + 1, path + char, [...pathOrigins, index], balance - 1, leftRemaining, rightRemaining);
     } else {
       record({
         operation: 'visit', title: '剪枝：右括号没有可配对项',
         narration: `位置 ${index} 的「)」遇到余额 0；保留它会让前缀余额变成 -1，因此这条分支立即剪枝。`,
         line: 'validate', candidate: path, level: minimumRemovals, queue: [], visited: [...visited], answers: [...answers], focus: `char-${index}`, focusStatus: 'error', scanIndex: index, balance
-      }, { path, leftRemaining, rightRemaining });
+      }, { path, pathOrigins, leftRemaining, rightRemaining });
     }
   };
 
-  search(0, '', 0, leftToRemove, rightToRemove);
+  search(0, '', [], 0, leftToRemove, rightToRemove);
   const sortedAnswers = answers.sort();
   snapshots.push({
     operation: 'done', title: '返回全部最少删除结果',
@@ -303,11 +305,11 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     badge: String(index),
     sublabel: index === snapshot.scanIndex
       ? snapshot.operation === 'remove' ? '将删除' : `余额 ${snapshot.balance ?? 0}`
-      : algorithm === 'backtracking' && index < (snapshot.scanIndex ?? -1) ? '已决策' : char === '(' || char === ')' ? '括号' : '保留字母',
+      : algorithm === 'backtracking' && snapshot.pathOrigins?.includes(index) ? '已保留' : char === '(' || char === ')' ? '待决策' : '保留字母',
     status: snapshot.focus === `char-${index}`
       ? snapshot.focusStatus
       : snapshot.operation === 'remove' && snapshot.scanIndex === index ? 'compare'
-        : algorithm === 'backtracking' && index < (snapshot.scanIndex ?? -1) ? 'visited' : 'idle'
+        : algorithm === 'backtracking' && snapshot.pathOrigins?.includes(index) ? 'visited' : 'idle'
   }));
   const visibleCandidates = algorithm === 'bfs' ? snapshot.queue.slice(0, 8) : [];
   const queueLayout = createQueue({
@@ -359,25 +361,34 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     focus.status = 'current';
   }
   if (algorithm === 'backtracking') {
-    const pathText = snapshot.path || 'ε（空路径）';
-    nodes.push({
-      id: 'dfs-path', label: candidateSummary(snapshot.path ?? ''), x: 866, y: 506,
-      radius: 36, badge: 'DFS', sublabel: `当前前缀：${pathText}`,
-      status: 'current'
-    });
+    const pathOrigins = snapshot.pathOrigins ?? [];
+    if (pathOrigins.length === 0) {
+      nodes.push({
+        id: 'path-empty', label: 'ε', x: 520, y: 410, radius: 24,
+        badge: '路径', sublabel: '当前还未保留字符', status: 'visited'
+      });
+    } else {
+      pathOrigins.forEach((origin, index) => nodes.push({
+        id: `path-char-${origin}`, label: input[origin], x: 260 + index * 58, y: 410, radius: 22,
+        badge: `原${origin}`, sublabel: '已保留', status: 'visited'
+      }));
+    }
   }
   return {
     nodes,
     edges: [],
     arrows,
-    containers: queueLayout.containers,
+    containers: algorithm === 'bfs' ? queueLayout.containers : [],
+
     labels: focus ? [{
       id: 'focus-label', targetId: focus.id,
       text: snapshot.operation === 'done' || snapshot.operation === 'match' ? '有效答案' : algorithm === 'backtracking' ? 'DFS 当前决策' : '本步焦点',
       detail: snapshot.operation === 'done' ? '本层全部有效结果' : algorithm === 'backtracking' ? `余额 ${snapshot.balance ?? 0} · 删除预算 L${snapshot.leftRemaining ?? 0}/R${snapshot.rightRemaining ?? 0}` : '按 FIFO 顺序处理',
       position: 'top', variant: 'callout', tone: 'accent'
     }] : [],
-    notes: [algorithm === 'bfs' ? '先检查整层，再生成下一层' : '删除预算与余额共同剪枝', `已发现 ${snapshot.visited.length} 个不同候选`],
+    notes: algorithm === 'bfs'
+      ? ['规则：每次只删除一个括号', `已发现 ${snapshot.visited.length} 个不同候选`]
+      : [`当前字符位置 ${snapshot.scanIndex ?? 0} / ${input.length - 1}：${input[snapshot.scanIndex ?? 0] ?? '开始搜索'}`, '先尝试删除分支，再尝试保留分支'],
     metrics: algorithm === 'bfs' ? [
       { label: '删除层', value: snapshot.level },
       { label: '待检查', value: snapshot.queue.length },
@@ -385,7 +396,7 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
     ] : [
       { label: '最少删除', value: snapshot.level },
       { label: '未匹配左括号', value: snapshot.balance ?? 0 },
-      { label: '剩余预算', value: (snapshot.leftRemaining ?? 0) + (snapshot.rightRemaining ?? 0) }
+      { label: `剩余删除 L${snapshot.leftRemaining ?? 0}/R${snapshot.rightRemaining ?? 0}`, value: (snapshot.leftRemaining ?? 0) + (snapshot.rightRemaining ?? 0) }
     ]
   };
 }
@@ -397,8 +408,90 @@ const languageTemplates: Record<Language, { code: string; anchors: Record<string
   javascript: { code: `function removeInvalidParentheses(s) {\n  // anchor:init\n  let queue = [s], visited = new Set([s]);\n  const answers = [];\n  // anchor:dequeue\n  while (queue.length) {\n    const size = queue.length;\n    // anchor:validate\n    for (let n = 0; n < size; n++) {\n      const cur = queue.shift();\n      if (isValid(cur)) answers.push(cur);\n      // anchor:generate\n      for (let i = 0; i < cur.length; i++) enqueueIfNew(cur, i);\n    }\n    // anchor:collect\n    if (answers.length) return answers;\n  }\n  return answers;\n}`, anchors: { init: [2, 3, 4], count: [2, 3], dequeue: [5, 6], validate: [8, 9, 10], generate: [11, 12], collect: [14], search: [11, 12] } }
 };
 
-function codeArtifacts(): Record<Language, CodeArtifact> {
-  return Object.fromEntries(Object.entries(languageTemplates).map(([language, value]) => [language, {
+const backtrackingLanguageTemplates: Record<Language, { code: string; anchors: Record<string, number[]> }> = {
+  java: {
+    code: `void dfs(String s, int i, StringBuilder path, int balance, int left, int right) {
+  // anchor:search
+  if (i == s.length()) {
+    // anchor:collect
+    if (left == 0 && right == 0 && balance == 0) answers.add(path.toString());
+    return;
+  }
+  char ch = s.charAt(i);
+  // anchor:remove
+  if (ch == '(' && left > 0) dfs(s, i + 1, path, balance, left - 1, right);
+  // anchor:keep
+  if (ch != ')' || balance > 0) {
+    path.append(ch);
+    dfs(s, i + 1, path, balance + (ch == '(' ? 1 : -1), left, right);
+    path.deleteCharAt(path.length() - 1); // 回溯撤销选择
+  }
+}`,
+    anchors: { count: [1], search: [2, 3, 4, 8], remove: [9, 10], keep: [11, 12, 13, 14, 15, 16], collect: [4], validate: [2, 3, 4], generate: [9, 10] }
+  },
+  python: {
+    code: `def dfs(i, path, balance, left, right):
+    # anchor:search
+    if i == len(s):
+        # anchor:collect
+        if left == right == balance == 0: answers.add(path)
+        return
+    ch = s[i]
+    # anchor:remove
+    if ch == '(' and left: dfs(i + 1, path, balance, left - 1, right)
+    if ch == ')' and right:
+        dfs(i + 1, path, balance, left, right - 1)
+    # anchor:keep
+    if ch != ')' or balance:
+        dfs(i + 1, path + ch, balance + (1 if ch == '(' else -1), left, right)
+# 回溯：每次递归返回即撤销本次选择`,
+    anchors: { search: [1, 2, 3, 6], remove: [7, 8, 9], keep: [10, 11], collect: [4], count: [1], validate: [2, 3, 4], generate: [7, 8, 9] }
+  },
+  go: {
+    code: `func dfs(i, balance, left, right int, path string) {
+    // anchor:search
+    if i == len(s) {
+        // anchor:collect
+        if left == 0 && right == 0 && balance == 0 { answers[path] = true }
+        return
+    }
+    ch := s[i]
+    // anchor:remove
+    if ch == '(' && left > 0 { dfs(i+1, balance, left-1, right, path) }
+    if ch == ')' && right > 0 { dfs(i+1, balance, left, right-1, path) }
+    // anchor:keep
+    if ch != ')' || balance > 0 {
+        next := balance
+        if ch == '(' { next++ } else { next-- }
+        dfs(i+1, next, left, right, path+string(ch))
+    }
+}`,
+    anchors: { search: [1, 2, 3, 6], remove: [7, 8, 9], keep: [10, 11, 12, 13, 14, 15], collect: [4], count: [1], validate: [2, 3, 4], generate: [7, 8, 9] }
+  },
+  javascript: {
+    code: `function dfs(i, path, balance, left, right) {
+  // anchor:search
+  if (i === s.length) {
+    // anchor:collect
+    if (left === 0 && right === 0 && balance === 0) answers.add(path);
+    return;
+  }
+  const ch = s[i];
+  // anchor:remove
+  if (ch === '(' && left > 0) dfs(i + 1, path, balance, left - 1, right);
+  if (ch === ')' && right > 0) dfs(i + 1, path, balance, left, right - 1);
+  // anchor:keep
+  if (ch !== ')' || balance > 0) {
+    dfs(i + 1, path + ch, balance + (ch === '(' ? 1 : -1), left, right);
+  }
+}`,
+    anchors: { search: [1, 2, 3, 6], remove: [7, 8, 9, 10], keep: [11, 12, 13], collect: [4], count: [1], validate: [2, 3, 4], generate: [7, 8, 9, 10] }
+  }
+};
+
+function codeArtifacts(algorithm: 'bfs' | 'backtracking'): Record<Language, CodeArtifact> {
+  const templates = algorithm === 'bfs' ? languageTemplates : backtrackingLanguageTemplates;
+  return Object.fromEntries(Object.entries(templates).map(([language, value]) => [language, {
     language, code: value.code, anchorLineMap: value.anchors
   }])) as Record<Language, CodeArtifact>;
 }
@@ -441,7 +534,7 @@ function definition(algorithm: 'bfs' | 'backtracking'): ProblemSolution {
       ? '按删除括号的数量逐层搜索：每一层只检查相同删除数的字符串。某层一旦出现有效括号串，就收集该层全部答案并停止；因此保证删除数量最少。使用 visited 去重，生成时只删除括号，字母始终保留。时间复杂度最坏 O(n·2^n)，空间复杂度 O(2^n)。'
       : '先统计必须删除的多余左、右括号，再用 DFS 决定每个括号保留或删除。只在删除预算耗尽、前缀余额从未为负且最终归零时收集答案，并跳过连续重复括号以去重。最坏时间 O(2^n)，空间 O(n)（不计输出）。',
     samples,
-    codes: codeArtifacts(),
+    codes: codeArtifacts(algorithm),
     steps: stepsFor(fallback),
     validateInput: inputValidator,
     generateRandom: () => JSON.stringify(Array.from({ length: 7 }, () => {

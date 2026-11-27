@@ -105,6 +105,19 @@ describe('createSolutionRegistry', () => {
     expect(backtracking.solve('(a)())()')).toEqual(['(a())()', '(a)()()']);
   });
 
+  it('draws the DFS path separately without an empty queue container', () => {
+    const step = registry[1].buildSteps('(a)())()').find((item) => item.operation === 'recurse' && item.title.includes('保留位置 0'));
+    expect(step?.frame.containers).toEqual([]);
+    expect(step?.frame.nodes.some((node) => node.id === 'dfs-path')).toBe(false);
+    expect(step?.frame.nodes.some((node) => node.id === 'path-char-0' && node.label === '(')).toBe(true);
+    expect(step?.frame.nodes.some((node) => node.id === 'path-char-1' && node.label === 'a')).toBe(false);
+    expect(step?.frame.nodes.some((node) => node.id === 'char-0' && node.status === 'compare')).toBe(true);
+    expect(step?.binding.variables.path).toBe('(');
+    expect(step?.binding.variables.balance).toBe(1);
+    expect(step?.binding.variables.leftRemaining).toBe(0);
+    expect(step?.binding.variables.rightRemaining).toBe(1);
+  });
+
   it('records explicit DFS decisions for a minimal unmatched parenthesis', () => {
     const steps = registry[1].buildSteps(')(');
     expect(steps.some((step) => step.title.includes('删除位置 0 的右括号'))).toBe(true);
@@ -117,6 +130,15 @@ describe('createSolutionRegistry', () => {
     expect(sol.solve('(a)())()')).toEqual(['(a())()', '(a)()()']);
     expect(sol.solve(')(')).toEqual(['']);
     expect(sol.solve('abc')).toEqual(['abc']);
+  });
+
+  it('maps each solution to its own algorithm code and line anchors', () => {
+    const bfsJava = registry[0].codes.java.code;
+    const dfsJava = registry[1].codes.java.code;
+    expect(bfsJava).toContain('Queue<String>');
+    expect(dfsJava).toContain('void dfs');
+    expect(dfsJava).toContain('回溯撤销选择');
+    expect(registry[1].codes.python.code).toContain('def dfs');
   });
 
   it('provides four language artifacts with valid anchor mappings', () => {
