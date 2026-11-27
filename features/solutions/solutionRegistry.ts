@@ -3,6 +3,7 @@ import type {
   CanvasFrame,
   CanvasNode,
   CodeArtifact,
+  CanvasLabel,
   InputValidationResult,
   Language,
   SolutionDefinition
@@ -318,6 +319,7 @@ function rowNodes(options: {
   visitedOrigins?: number[];
   status?: CanvasNode['status'];
   label: string;
+  showLabels?: boolean;
   badgeAtIndex?: (index: number) => string | undefined;
   detailAtFocus?: (index: number) => string;
 }): CanvasNode[] {
@@ -326,16 +328,18 @@ function rowNodes(options: {
     id: `${options.id}-empty`, label: 'ε', x: 600, y: options.y, radius: 20,
     badge: '空串', sublabel: '字符串为空', status: options.status ?? 'visited'
   }];
-  const pitch = chars.length > 14 ? 42 : 48;
+  const compact = chars.length > 14;
+  const pitch = compact ? 42 : 68;
+  const radius = compact ? 20 : 26;
   const startX = (1200 - Math.max(chars.length - 1, 0) * pitch) / 2;
   return chars.map((char, index) => ({
     id: `${options.id}-${index}`,
     label: char,
     x: startX + index * pitch,
     y: options.y,
-    radius: 19,
+    radius,
     badge: options.badgeAtIndex?.(index) ?? String(options.origins?.[index] ?? index),
-    sublabel: index === options.focusedIndex
+    sublabel: !options.showLabels ? '' : index === options.focusedIndex
       ? options.detailAtFocus?.(index) ?? options.label
       : options.visitedOrigins?.includes(options.origins?.[index] ?? index) ? '已扫描' : options.label,
     status: index === options.focusedIndex ? options.status ?? 'current' : options.visitedOrigins?.includes(options.origins?.[index] ?? index) ? 'visited' : 'idle'
@@ -348,35 +352,46 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
   const isRemoval = algorithm === 'bfs' && snapshot.operation === 'remove';
   const originFocusIndex = snapshot.scanIndex === undefined ? undefined : sourceOrigins[snapshot.scanIndex];
   const inputVisitedOrigins = algorithm === 'backtracking' ? snapshot.pathOrigins : sourceOrigins.slice(0, Math.max(originFocusIndex ?? 0, 0));
-  const nodes: CanvasNode[] = rowNodes({
-    id: 'input-char', value: input, y: 115,
+  const nodes: CanvasNode[] = [{
+    id: 'input-row-label', label: '原输入', x: 600, y: 52, radius: 0,
+    badge: '', sublabel: '', status: 'idle'
+  }, ...rowNodes({
+    id: 'input-char', value: input, y: 125,
     focusedIndex: originFocusIndex,
     visitedOrigins: inputVisitedOrigins,
     status: isRemoval ? 'error' : algorithm === 'backtracking' || snapshot.scanIndex !== undefined ? 'compare' : 'visited',
     label: '原输入',
-    badgeAtIndex: (index) => `原${index}`
-  });
+    badgeAtIndex: (index) => `原${index}`,
+    showLabels: false
+  })];
   const activeStatus = snapshot.focusStatus === 'error' ? 'error' : isRemoval ? 'compare' : snapshot.focusStatus;
   const focusedCandidateIndex = snapshot.focus.startsWith('candidate-char-')
     ? Number(snapshot.focus.slice('candidate-char-'.length))
     : snapshot.scanIndex !== undefined ? snapshot.scanIndex
       : algorithm === 'bfs' && (snapshot.operation === 'init' || snapshot.operation === 'dequeue') ? 0 : undefined;
-  const activeFocusLabelIndex = snapshot.scanIndex ?? (algorithm === 'bfs' && snapshot.operation === 'dequeue' ? 0 : undefined);
 
-  nodes.push(...rowNodes({
-    id: 'active-char', value: source, y: 270, origins: sourceOrigins,
+  nodes.push({
+    id: 'active-row-label', label: isRemoval ? '将要删除的原候选' : algorithm === 'bfs' ? '当前检查候选' : '正在处理的字符',
+    x: 600, y: 226, radius: 0, badge: '', sublabel: '', status: 'idle'
+  }, ...rowNodes({
+    id: 'active-char', value: source, y: 292, origins: sourceOrigins,
     focusedIndex: focusedCandidateIndex,
     visitedOrigins: algorithm === 'backtracking' ? snapshot.pathOrigins : undefined,
     status: activeStatus,
     label: isRemoval ? '待删除原候选' : algorithm === 'bfs' ? '当前候选' : '当前输入 · 逐位决策',
     badgeAtIndex: (index) => snapshot.candidateOrigins ? `原${snapshot.candidateOrigins[index]}` : undefined,
+    showLabels: isRemoval || algorithm === 'backtracking' || snapshot.scanIndex !== undefined,
     detailAtFocus: () => isRemoval ? '将删除' : `余额 ${snapshot.balance ?? 0}`
   }));
 
   if (isRemoval) {
-    nodes.push(...rowNodes({
+    nodes.push({
+      id: 'result-row-label', label: '删除后的新候选', x: 600, y: 374, radius: 0,
+      badge: '', sublabel: '', status: 'idle'
+    }, ...rowNodes({
       id: 'result-char', value: snapshot.nextCandidate ?? snapshot.candidate,
-      y: 390, origins: snapshot.nextOrigins,
+      y: 442, origins: snapshot.nextOrigins, focusedIndex: snapshot.scanIndex,
+      status: 'done', detailAtFocus: () => '保留下来',
       label: '删除后候选'
     }));
   }
@@ -384,19 +399,18 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
   if (algorithm === 'backtracking') {
     const origins = snapshot.pathOrigins ?? [];
     const path = snapshot.path ?? '';
-    nodes.push(...rowNodes({
-      id: 'path-char', value: path, y: 405, origins,
-      label: path ? '已保留到路径' : '当前路径为空'
+    nodes.push({
+      id: 'path-row-label', label: '当前构造出的有效前缀', x: 600, y: 382, radius: 0,
+      badge: '', sublabel: '', status: 'idle'
+    }, ...rowNodes({
+      id: 'path-char', value: path || 'ε', y: 426, origins: path ? origins : undefined,
+      label: path ? '已保留' : '还没有字符'
     }));
-    if (!path) nodes.push({
-      id: 'path-empty', label: 'ε', x: 600, y: 405, radius: 20,
-      badge: '路径', sublabel: '尚未保留字符', status: 'visited'
-    });
   }
 
   const visibleCandidates = algorithm === 'bfs' ? snapshot.queue.slice(0, 8) : [];
   const queueLayout = createQueue({
-    id: 'bfs-queue', x: 142, y: isRemoval ? 535 : 450, capacity: 8,
+    id: 'bfs-queue', x: 142, y: isRemoval ? 560 : 475, capacity: 8,
     width: 624, height: 104, slotWidth: 76,
     title: `待检查候选 · 删除 ${snapshot.level} 层`,
     items: visibleCandidates.map((value) => ({
@@ -409,18 +423,16 @@ function frameFor(snapshot: SearchSnapshot, input: string, algorithm: 'bfs' | 'b
   } as CanvasNode));
   const answerNodes = snapshot.answers.slice(0, 3).map((answer, index) => ({
     id: `answer-${index}-${encodeURIComponent(answer)}`, label: candidateSummary(answer),
-    x: 945, y: 510 + index * 64, radius: 26, badge: `解${index + 1}`,
+    x: 945, y: 600 + index * 64, radius: 26, badge: `解${index + 1}`,
     sublabel: `有效 · 删 ${snapshot.level}`, status: 'done' as const
   }));
   nodes.push(...queueNodes, ...answerNodes);
+  if (algorithm === 'bfs') nodes.push({
+    id: 'queue-row-label', label: '待检查候选（先进先出）', x: 450, y: isRemoval ? 535 : 450,
+    radius: 0, badge: '', sublabel: '', status: 'idle'
+  });
 
-  const focusId = activeFocusLabelIndex === undefined ? undefined : `${algorithm === 'backtracking' ? 'input-char' : 'active-char'}-${activeFocusLabelIndex}`;
-  const labels = focusId ? [{
-    id: 'focus-label', targetId: focusId,
-    text: snapshot.operation === 'done' || snapshot.operation === 'match' ? '有效答案' : algorithm === 'backtracking' ? '正在决定这个字符' : isRemoval ? `删除下标 ${snapshot.scanIndex}` : '正在检查当前候选',
-    detail: snapshot.operation === 'done' ? '本层全部有效结果' : algorithm === 'backtracking' ? `路径「${snapshot.path || '空'}」 · 余额 ${snapshot.balance ?? 0}` : isRemoval ? `「${source}」→「${snapshot.nextCandidate || '空串'}」` : `下标 ${snapshot.scanIndex ?? 0} · 余额 ${snapshot.balance ?? 0}`,
-    position: 'top' as const, variant: 'callout' as const, tone: 'accent' as const
-  }] : [];
+  const labels: CanvasLabel[] = [];
 
   return {
     nodes,

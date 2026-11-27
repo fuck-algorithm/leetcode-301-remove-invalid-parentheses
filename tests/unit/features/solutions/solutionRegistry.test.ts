@@ -64,6 +64,7 @@ describe('createSolutionRegistry', () => {
     const secondScan = validationSteps.find((step) => step.title.includes('字符 2/'));
     expect(firstScan?.narration).toContain('未配对左括号');
     expect(firstScan?.frame.nodes.filter((node) => node.status === 'compare')).toHaveLength(2);
+    expect(firstScan?.frame.labels).toEqual([]);
     expect(firstScan?.frame.nodes.find((node) => node.id === 'active-char-0')?.sublabel).toBe('余额 1');
     expect(firstScan?.frame.nodes.find((node) => node.id === 'input-char-0')?.label).toBe('(');
     expect(secondScan?.frame.nodes.find((node) => node.id === 'active-char-1')?.sublabel).toBe('余额 0');
